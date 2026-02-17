@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Nowsei</string>
+    <!-- Substitua o valor abaixo pelo seu Web Client ID do Google Cloud -->
+    <string name="default_web_client_id" translatable="false">61108121856-oikeef93if59j99jc1iaktdoljoh9c3o.apps.googleusercontent.com</string>
+</resources>

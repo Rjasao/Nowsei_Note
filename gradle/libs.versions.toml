@@ -1,0 +1,109 @@
+[versions]
+# --- Ferramentas de Build Principais (Estáveis) ---
+agp = "8.5.0"
+kotlin = "1.9.24"
+# AÇÃO: Usando a versão mais estável e recomendada do KSP para o Kotlin 1.9.x
+ksp = "1.9.24-1.0.20"
+
+# --- BOM (Bill of Materials) do Compose ---
+composeBom = "2024.05.00"
+
+# --- Dependências ---
+coreKtx = "1.13.1"
+lifecycleRuntimeKtx = "2.8.3"
+activityCompose = "1.8.2"
+activity = "1.8.2"
+hilt = "2.51.1"
+hilt-navigation-compose = "1.2.0"
+room = "2.6.1"
+coroutines = "1.8.0"
+appcompat = "1.7.0"
+material = "1.12.0"
+constraintlayout = "2.2.1"
+coil = "2.6.0"
+
+# CORREÇÃO: Adicionadas versões para WorkManager e sua integração com Hilt
+work = "2.9.0"
+hiltWork = "1.2.0"
+
+# --- Versões para as APIs do Google ---
+google-signin = "21.2.0"
+
+# VERSÃO UNIFICADA PARA TODO O CONJUNTO DA API DO GOOGLE
+google-api-client-version = "1.34.0"
+# VERSÃO ESPECÍFICA DO DRIVE COMPATÍVEL COM O CONJUNTO ACIMA
+google-api-services-drive-version = "v3-rev197-1.25.0"
+
+# --- Dependências de Teste ---
+junit = "4.13.2"
+junitVersion = "1.2.1"
+espressoCore = "3.6.1"
+
+[libraries]
+# --- Core e Lifecycle ---
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycleRuntimeKtx" }
+androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+androidx-activity = { group = "androidx.activity", name = "activity", version.ref = "activity" }
+
+# --- UI (Compose e Material Design) ---
+androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
+androidx-compose-ui = { group = "androidx.compose.ui", name = "ui" }
+androidx-compose-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
+androidx-compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
+androidx-compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
+androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3" }
+androidx-compose-material-icons = { group = "androidx.compose.material", name = "material-icons-extended" }
+androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
+material = { group = "com.google.android.material", name = "material", version.ref = "material" }
+androidx-constraintlayout = { group = "androidx.constraintlayout", name = "constraintlayout", version.ref = "constraintlayout" }
+
+# --- Injeção de Dependência (Hilt) ---
+hilt-android = { group = "com.google.dagger", name = "hilt-android", version.ref = "hilt" }
+hilt-compiler = { group = "com.google.dagger", name = "hilt-compiler", version.ref = "hilt" }
+androidx-hilt-navigation-compose = { group = "androidx.hilt", name = "hilt-navigation-compose", version.ref = "hilt-navigation-compose" }
+# CORREÇÃO: Adicionada a dependência para integração do Hilt com WorkManager
+androidx-hilt-work = { group = "androidx.hilt", name = "hilt-work", version.ref = "hiltWork" }
+
+# --- Tarefas em Segundo Plano (WorkManager) ---
+# CORREÇÃO: Adicionada a dependência do WorkManager
+androidx-work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "work" }
+
+# --- Banco de Dados (Room) ---
+androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
+androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
+androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
+
+# --- Coroutines ---
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+
+# --- Carregamento de Imagem ---
+coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
+
+# --- Bibliotecas para Autenticação e Google Drive (VERSÕES FORÇADAS E CORRIGIDAS) ---
+google-signin-auth = { group = "com.google.android.gms", name = "play-services-auth", version.ref = "google-signin" }
+
+# Todas as bibliotecas da API agora usam a mesma versão unificada, exceto o drive que tem sua própria versão compatível
+google-api-client-android = { group = "com.google.api-client", name = "google-api-client-android", version.ref = "google-api-client-version" }
+# SINTAXE CORRIGIDA: "group", "name", e "version" separados
+google-api-services-drive = { group = "com.google.apis", name = "google-api-services-drive", version.ref = "google-api-services-drive-version" }
+google-http-client-gson = { group = "com.google.http-client", name = "google-http-client-gson", version.ref = "google-api-client-version" }
+
+# --- Teste ---
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
+androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
+androidx-compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest" }
+androidx-compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
+
+gson = { group = "com.google.code.gson", name = "gson", version = "2.10.1" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+android-library = { id = "com.android.library", version.ref = "agp" }
+jetbrains-kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
+hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
+
