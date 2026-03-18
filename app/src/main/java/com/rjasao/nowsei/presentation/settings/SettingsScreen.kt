@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package com.rjasao.nowsei.presentation.settings
 
 import android.app.Activity

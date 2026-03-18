@@ -1,61 +1,77 @@
 package com.rjasao.nowsei.data.repository
 
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import com.rjasao.nowsei.data.local.PageDao
+import com.rjasao.nowsei.data.local.PageTombstoneStore
 import com.rjasao.nowsei.data.local.entity.PageEntity
+import com.rjasao.nowsei.domain.model.ContentBlock
 import com.rjasao.nowsei.domain.model.Page
 import com.rjasao.nowsei.domain.repository.PageRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
-import java.util.Date
 import javax.inject.Inject
-import javax.inject.Singleton
 
-@Singleton
 class PageRepositoryImpl @Inject constructor(
-    private val pageDao: PageDao
+    private val pageDao: PageDao,
+    private val pageTombstoneStore: PageTombstoneStore,
+    private val gson: Gson
 ) : PageRepository {
 
     override fun getPagesForSection(sectionId: String): Flow<List<Page>> {
         return pageDao.getPagesForSection(sectionId).map { entities ->
-            entities.map { it.toPage() }
+            entities.map { it.toDomain() }
         }
     }
 
-    override fun getPageById(pageId: String): Flow<Page?> {
-        return pageDao.getPageById(pageId).map { entity -> entity?.toPage() }
+    override fun getPageById(id: String): Flow<Page?> {
+        return pageDao.getPageById(id).map { entity ->
+            entity?.toDomain()
+        }
     }
 
     override suspend fun upsertPage(page: Page) {
-        pageDao.upsertPage(page.toPageEntity())
+        pageDao.upsertPage(page.toEntity())
+        pageTombstoneStore.clear(page.id)
     }
 
-    override suspend fun savePage(page: Page) {
-        upsertPage(page)
-    }
-
-    // ✅ OneNote-like: delete é tombstone
     override suspend fun deletePage(page: Page) {
-        pageDao.softDeletePage(page.id, System.currentTimeMillis())
+        pageTombstoneStore.markDeleted(page.id, System.currentTimeMillis())
+        pageDao.deletePage(page.toEntity())
     }
 
-    private fun PageEntity.toPage() = Page(
-        id = id,
-        sectionId = sectionId,
-        title = title,
-        content = content,
-        lastModifiedAt = Date(lastModifiedAt),
-        position = position,
-        deletedAt = deletedAt?.let { Date(it) }
-    )
+    override suspend fun getAllPages(): List<Page> {
+        return pageDao.getAllPages().map { it.toDomain() }
+    }
 
-    private fun Page.toPageEntity() = PageEntity(
-        id = id,
-        sectionId = sectionId,
-        title = title,
-        content = content,
-        createdAt = lastModifiedAt.time,
-        lastModifiedAt = lastModifiedAt.time,
-        position = position,
-        deletedAt = deletedAt?.time
-    )
+    // -----------------------------
+    // MAPPERS
+    // -----------------------------
+
+    private fun PageEntity.toDomain(): Page {
+        val type = object : TypeToken<List<ContentBlock>>() {}.type
+        val blocks: List<ContentBlock> =
+            if (contentBlocksJson.isBlank()) emptyList()
+            else gson.fromJson(contentBlocksJson, type)
+
+        return Page(
+            id = id,
+            sectionId = sectionId,
+            title = title,
+            contentBlocks = blocks,
+            createdAt = createdAt,
+            updatedAt = updatedAt
+        )
+    }
+
+    private fun Page.toEntity(): PageEntity {
+        return PageEntity(
+            id = id,
+            sectionId = sectionId,
+            title = title,
+            contentBlocksJson = gson.toJson(contentBlocks),
+            createdAt = createdAt,
+            updatedAt = updatedAt
+        )
+    }
 }

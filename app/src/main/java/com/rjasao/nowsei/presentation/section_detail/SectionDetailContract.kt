@@ -6,45 +6,40 @@ object SectionDetailContract {
 
     data class State(
         val sectionId: String = "",
-        val sectionTitle: String = "Seção",
-
+        val sectionTitle: String = "",
         val pages: List<Page> = emptyList(),
-
-        val isLoading: Boolean = false,
-        val isSyncing: Boolean = false,
-
+        val isLoading: Boolean = true,
         val isSearchActive: Boolean = false,
-        val searchQuery: String = ""
+        val searchQuery: String = "",
+        val isSyncing: Boolean = false
     ) {
         val filteredPages: List<Page>
             get() = if (searchQuery.isBlank()) {
                 pages
             } else {
-                pages.filter { it.title.contains(searchQuery, ignoreCase = true) }
+                pages.filter {
+                    it.title.contains(searchQuery, ignoreCase = true)
+                }
             }
     }
 
     sealed interface Event {
-        data object OnAddPageClick : Event
+        object OnAddPageClick : Event
         data class OnDuplicatePageClick(val page: Page) : Event
         data class OnDeletePageClick(val page: Page) : Event
         data class OnEditPageClick(val page: Page) : Event
-
-        data object OnConfirmDialog : Event
-        data object OnDismissDialog : Event
-        data class OnDialogTitleChanged(val newTitle: String) : Event
-
-        data object OnToggleSearch : Event
-        data class OnSearchQueryChanged(val query: String) : Event
-
-        data object OnSyncClick : Event
-
-        // ✅ Reordenação
         data class OnMovePage(val from: Int, val to: Int) : Event
+        object OnConfirmDialog : Event
+        object OnDismissDialog : Event
+        data class OnDialogTitleChanged(val newTitle: String) : Event
+        object OnToggleSearch : Event
+        data class OnSearchQueryChanged(val query: String) : Event
+        object OnSyncClick : Event
     }
 
     sealed interface DialogState {
         data class Delete(val page: Page) : DialogState
         data class Rename(val page: Page, val newTitle: String) : DialogState
     }
+
 }

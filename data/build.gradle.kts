@@ -48,7 +48,7 @@ android {
 
 dependencies {
     implementation(project(":domain"))
-
+    implementation(libs.gson)
     // Room
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
@@ -60,22 +60,20 @@ dependencies {
     implementation(libs.material)
     implementation(libs.kotlinx.coroutines.core)
 
-    // WorkManager - ✅ AÇÃO: Adicione esta linha para o WorkManager
-    // A versão 2.9.0 é a versão estável mais recente e recomendada.
-    implementation("androidx.work:work-runtime-ktx:2.9.0")
+    // WorkManager
+    implementation(libs.androidx.work.runtime.ktx)
 
     // Hilt
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
 
     // Google APIs & Auth
-    implementation("com.google.android.gms:play-services-auth:21.2.0")
-    implementation("com.google.api-client:google-api-client-android:1.34.0")
-    implementation("com.google.apis:google-api-services-drive:v3-rev197-1.25.0")
-    implementation("com.google.http-client:google-http-client-gson:1.44.1")
-    implementation("com.google.code.gson:gson:2.10.1")
+    implementation(libs.google.signin.auth)
+    implementation(libs.google.api.client.android)
+    implementation(libs.google.api.services.drive)
+    implementation(libs.google.http.client.gson)
 
-    // Gson (Esta linha pode ser removida pois a de cima já a declara)
+    // Gson (linha duplicada removida)
     // implementation(libs.gson)
 
     // Testes

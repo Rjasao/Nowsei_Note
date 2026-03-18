@@ -8,6 +8,7 @@ import com.google.gson.Gson
 import com.rjasao.nowsei.domain.model.Notebook
 import com.rjasao.nowsei.domain.model.Page
 import com.rjasao.nowsei.domain.model.Section
+import com.rjasao.nowsei.domain.model.SyncManifest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
@@ -21,7 +22,7 @@ import javax.inject.Singleton
 class GoogleDriveService @Inject constructor(
     private val driveProvider: Provider<Drive?>,
     private val gson: Gson
-) {
+) : DriveSyncDataSource {
     private val appFolderName = "NowseiApp"
     private var appFolderId: String? = null
     private var backupFolderId: String? = null
@@ -46,6 +47,9 @@ class GoogleDriveService @Inject constructor(
         private const val BACKUP_LATEST_ZIP = "nowsei_backup_latest.zip"
         private const val BACKUP_MANIFEST_JSON = "nowsei_manifest.json"
 
+        // ✅ Manifest incremental (hash + updatedAt)
+        private const val SYNC_MANIFEST_JSON = "sync_manifest.json"
+
         // ✅ Tombstones (para delete bidirecional sem ressuscitar itens)
         private const val TOMBSTONES_JSON = "tombstones.json"
     }
@@ -62,7 +66,54 @@ class GoogleDriveService @Inject constructor(
         val pages: Map<String, Long> = emptyMap()
     )
 
-    fun isReady(): Boolean = driveProvider.get() != null
+    override fun isReady(): Boolean = driveProvider.get() != null
+
+    // ---------------------------------
+    // Manifest incremental
+    // ---------------------------------
+
+    /**
+     * Manifest incremental (hash + updatedAt). Se não existir ainda no Drive,
+     * retornamos um manifest vazio.
+     */
+    override suspend fun readManifest(): SyncManifest {
+        val appId = getOrCreateAppFolderId()
+        val file = findChildByName(appId, SYNC_MANIFEST_JSON) ?: return SyncManifest()
+        return try {
+            val drive = requireDrive()
+            val inputStream = drive.files().get(file.id).executeMediaAsInputStream()
+            val content = BufferedReader(InputStreamReader(inputStream, StandardCharsets.UTF_8)).readText()
+            gson.fromJson(content, SyncManifest::class.java) ?: SyncManifest()
+        } catch (e: Exception) {
+            Log.e(TAG, "Falha lendo manifest incremental", e)
+            SyncManifest()
+        }
+    }
+
+    override suspend fun writeManifest(manifest: SyncManifest) {
+        val appId = getOrCreateAppFolderId()
+        upsertJsonFile(appId, SYNC_MANIFEST_JSON, gson.toJson(manifest))
+    }
+
+    /**
+     * Busca um arquivo/pasta filho por nome dentro de um parent.
+     * Retorna null se não existir.
+     */
+    private suspend fun findChildByName(parentId: String, childName: String): File? {
+        val drive = requireDrive()
+        val safeName = childName.replace("'", "\\'")
+        return withContext(Dispatchers.IO) {
+            val q = "'$parentId' in parents and name='$safeName' and trashed=false"
+            drive.files()
+                .list()
+                .setQ(q)
+                .setFields("files(id,name,mimeType,modifiedTime)")
+                .execute()
+                .files
+                ?.firstOrNull()
+        }
+    }
+
 
     private fun requireDrive(): Drive {
         return driveProvider.get()
@@ -130,20 +181,26 @@ class GoogleDriveService @Inject constructor(
     // ✅ Tombstones (API)
     // ----------------------------
 
-    suspend fun readTombstones(): Tombstones {
+    override suspend fun readTombstones(): SyncTombstones {
         val appId = getOrCreateAppFolderId()
-        val json = readJsonFileIfExists(appId, TOMBSTONES_JSON) ?: return Tombstones()
+        val json = readJsonFileIfExists(appId, TOMBSTONES_JSON) ?: return SyncTombstones()
         return try {
-            gson.fromJson(json, Tombstones::class.java) ?: Tombstones()
+            gson.fromJson(json, Tombstones::class.java)?.let {
+                SyncTombstones(it.notebooks, it.sections, it.pages)
+            } ?: SyncTombstones()
         } catch (e: Exception) {
             Log.e(TAG, "Falha lendo $TOMBSTONES_JSON (ignorando)", e)
-            Tombstones()
+            SyncTombstones()
         }
     }
 
-    suspend fun writeTombstones(tombstones: Tombstones) {
+    override suspend fun writeTombstones(tombstones: SyncTombstones) {
         val appId = getOrCreateAppFolderId()
-        upsertJsonFile(appId, TOMBSTONES_JSON, gson.toJson(tombstones))
+        upsertJsonFile(
+            appId,
+            TOMBSTONES_JSON,
+            gson.toJson(Tombstones(tombstones.notebooks, tombstones.sections, tombstones.pages))
+        )
     }
 
     /** Atualiza o tombstone mantendo o maior timestamp. */
@@ -280,7 +337,7 @@ class GoogleDriveService @Inject constructor(
     // API pública (Notebooks/Sections/Pages)
     // ----------------------------
 
-    suspend fun getAllNotebooks(): List<Notebook> {
+    override suspend fun getAllNotebooks(): List<Notebook> {
         val appId = getOrCreateAppFolderId()
         val notebookFolders = listFolders(appId)
         val out = mutableListOf<Notebook>()
@@ -296,14 +353,14 @@ class GoogleDriveService @Inject constructor(
         return out
     }
 
-    suspend fun saveNotebook(notebook: Notebook) {
+    override suspend fun saveNotebook(notebook: Notebook) {
         val appId = getOrCreateAppFolderId()
         val notebookFolderName = "${sanitizeName(notebook.title)}__${notebook.id}"
         val notebookFolderId = getOrCreateFolder(appId, notebookFolderName)
         upsertJsonFile(notebookFolderId, NOTEBOOK_META_FILE, gson.toJson(notebook))
     }
 
-    suspend fun getSectionsForNotebook(notebookId: String): List<Section> {
+    override suspend fun getSectionsForNotebook(notebookId: String): List<Section> {
         val appId = getOrCreateAppFolderId()
         val notebookFolder = findNotebookFolderId(appId, notebookId) ?: return emptyList()
 
@@ -322,10 +379,10 @@ class GoogleDriveService @Inject constructor(
         return out
     }
 
-    suspend fun saveSection(section: Section) {
+    override suspend fun saveSection(section: Section) {
         val appId = getOrCreateAppFolderId()
         val notebookFolder = findNotebookFolderId(appId, section.notebookId)
-            ?: getOrCreateFolder(appId, "Notebook__${section.notebookId}")
+            ?: throw IllegalStateException("Notebook remoto ausente para section ${section.id}")
 
         val sectionFolderName = "${sanitizeName(section.title)}__${section.id}"
         val sectionFolderId = getOrCreateFolder(notebookFolder, sectionFolderName)
@@ -356,7 +413,7 @@ class GoogleDriveService @Inject constructor(
         }
     }
 
-    suspend fun getPagesForSection(sectionId: String): List<Page> {
+    override suspend fun getPagesForSection(sectionId: String): List<Page> {
         val appId = getOrCreateAppFolderId()
         val sectionFolder = findSectionFolderId(appId, sectionId) ?: return emptyList()
 
@@ -383,10 +440,10 @@ class GoogleDriveService @Inject constructor(
         return out
     }
 
-    suspend fun savePage(page: Page) {
+    override suspend fun savePage(page: Page) {
         val appId = getOrCreateAppFolderId()
         val sectionFolder = findSectionFolderId(appId, page.sectionId)
-            ?: getOrCreateFolder(appId, "Section__${page.sectionId}")
+            ?: throw IllegalStateException("Section remota ausente para page ${page.id}")
 
         // ✅ sempre no padrão estável por ID
         val stableName = stablePageFileName(page.id)
@@ -461,19 +518,19 @@ class GoogleDriveService @Inject constructor(
         deleteById(folderId)
     }
 
-    suspend fun deleteNotebook(notebookId: String) {
+    override suspend fun deleteNotebook(notebookId: String) {
         val appId = getOrCreateAppFolderId()
         val folderId = findNotebookFolderId(appId, notebookId) ?: return
         deleteFolderRecursive(folderId)
     }
 
-    suspend fun deleteSection(sectionId: String) {
+    override suspend fun deleteSection(sectionId: String) {
         val appId = getOrCreateAppFolderId()
         val folderId = findSectionFolderId(appId, sectionId) ?: return
         deleteFolderRecursive(folderId)
     }
 
-    suspend fun deletePage(sectionId: String, pageId: String) {
+    override suspend fun deletePage(sectionId: String, pageId: String) {
         val drive = requireDrive()
         val appId = getOrCreateAppFolderId()
         val sectionFolderId = findSectionFolderId(appId, sectionId) ?: return

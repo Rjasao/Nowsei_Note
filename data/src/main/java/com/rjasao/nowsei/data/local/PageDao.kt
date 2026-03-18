@@ -1,53 +1,30 @@
 package com.rjasao.nowsei.data.local
 
-import androidx.room.Dao
-import androidx.room.Query
-import androidx.room.Update
-import androidx.room.Upsert
+import androidx.room.*
 import com.rjasao.nowsei.data.local.entity.PageEntity
 import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface PageDao {
 
-    @Upsert
-    suspend fun upsertPage(page: PageEntity)
-
-    @Update
-    suspend fun updatePages(pages: List<PageEntity>)
-
-    // ✅ UI: só ativos
-    @Query("""
-        SELECT * FROM pages 
-        WHERE sectionId = :sectionId AND deletedAt IS NULL
-        ORDER BY position ASC, lastModifiedAt DESC
-    """)
+    @Query("SELECT * FROM pages WHERE sectionId = :sectionId ORDER BY createdAt ASC")
     fun getPagesForSection(sectionId: String): Flow<List<PageEntity>>
 
-    @Query("SELECT * FROM pages WHERE id = :pageId")
-    fun getPageById(pageId: String): Flow<PageEntity?>
+    @Query("SELECT * FROM pages WHERE id = :id")
+    fun getPageById(id: String): Flow<PageEntity?>
 
-    @Query("SELECT * FROM pages WHERE id = :pageId")
-    suspend fun getPageByIdBlocking(pageId: String): PageEntity?
+    @Query("SELECT * FROM pages WHERE id = :id")
+    suspend fun getPageEntityById(id: String): PageEntity?
 
-    // ✅ Sync: inclui deletados
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertPage(page: PageEntity)
+
+    @Delete
+    suspend fun deletePage(page: PageEntity)
+
+    @Query("DELETE FROM pages WHERE id = :id")
+    suspend fun deletePageById(id: String)
+
     @Query("SELECT * FROM pages")
-    suspend fun getAllPagesForSync(): List<PageEntity>
-
-    @Query("SELECT * FROM pages WHERE sectionId = :sectionId")
-    suspend fun getPagesForSectionForSync(sectionId: String): List<PageEntity>
-
-    // ✅ Soft delete
-    @Query("UPDATE pages SET deletedAt = :ts, lastModifiedAt = :ts WHERE id = :id")
-    suspend fun softDeletePage(id: String, ts: Long)
-
-    @Query("UPDATE pages SET deletedAt = NULL WHERE id = :id")
-    suspend fun undeletePage(id: String)
-
-    // Mantém utilitários existentes
-    @Query("DELETE FROM pages WHERE sectionId = :sectionId")
-    suspend fun deletePagesFromSection(sectionId: String)
-
-    @Query("SELECT COUNT(id) FROM pages WHERE sectionId = :sectionId AND deletedAt IS NULL")
-    suspend fun getPageCountInSection(sectionId: String): Int
+    suspend fun getAllPages(): List<PageEntity>
 }

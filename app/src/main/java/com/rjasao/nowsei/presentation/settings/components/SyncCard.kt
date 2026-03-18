@@ -50,7 +50,7 @@ fun SyncCard(
             Text(
                 text = when {
                     state.isSyncing -> "Em andamento..."
-                    !state.lastMessage.isNullOrBlank() -> state.lastMessage!!
+                    !state.lastMessage.isNullOrBlank() -> state.lastMessage.orEmpty()
                     else -> "Pronto."
                 },
                 style = MaterialTheme.typography.bodyMedium,

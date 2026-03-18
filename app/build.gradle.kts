@@ -33,11 +33,12 @@ android {
         }
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
     }
+
     kotlinOptions {
-        jvmTarget = "1.8"
+        jvmTarget = "11"
     }
 
     buildFeatures {
@@ -66,9 +67,6 @@ android {
     }
 }
 dependencies {
-    implementation("io.coil-kt:coil-compose:2.6.0")
-    implementation("androidx.core:core-ktx:1.13.1")
-
     // --- Módulos Locais ---
     implementation(project(":domain"))
     implementation(project(":data"))
@@ -76,8 +74,8 @@ dependencies {
     // --- Core & Lifecycle ---
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.activity.compose)
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.3")
 
     // --- Jetpack Compose ---
     val composeBom = platform(libs.androidx.compose.bom)
@@ -92,10 +90,10 @@ dependencies {
 
     // --- UI ---
     implementation(libs.coil.compose)
-    implementation("org.burnoutcrew.composereorderable:reorderable:0.9.6")
+    implementation(libs.reorderable)
 
     // ✅ Scanner (auto + manual, recorte em perspectiva). Retorna imagens (JPG) e a gente salva como PNG.
-    implementation("com.google.android.gms:play-services-mlkit-document-scanner:16.0.0")
+    implementation(libs.document.scanner)
 
     // --- Hilt ---
     implementation(libs.hilt.android)
@@ -104,8 +102,8 @@ dependencies {
 
     // --- WorkManager + Hilt WorkerFactory ---
     implementation(libs.androidx.work.runtime.ktx)
-    implementation("androidx.hilt:hilt-work:1.2.0")
-    ksp("androidx.hilt:hilt-compiler:1.2.0")
+    implementation(libs.androidx.hilt.work)
+    ksp(libs.androidx.hilt.compiler)
 
     // --- Room ---
     implementation(libs.androidx.room.runtime)

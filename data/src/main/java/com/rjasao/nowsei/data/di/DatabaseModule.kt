@@ -2,6 +2,7 @@ package com.rjasao.nowsei.data.di
 
 import android.content.Context
 import androidx.room.Room
+import com.rjasao.nowsei.data.local.MIGRATION_7_8
 import com.rjasao.nowsei.data.local.NowseiDatabase
 import dagger.Module
 import dagger.Provides
@@ -25,7 +26,8 @@ object DatabaseModule {
             .addMigrations(
                 NowseiDatabase.MIGRATION_4_5,
                 NowseiDatabase.MIGRATION_5_6,
-                NowseiDatabase.MIGRATION_6_7
+                NowseiDatabase.MIGRATION_6_7,
+                MIGRATION_7_8
             )
             .build()
     }

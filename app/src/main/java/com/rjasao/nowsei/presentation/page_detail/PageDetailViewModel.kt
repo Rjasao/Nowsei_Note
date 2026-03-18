@@ -1,404 +1,554 @@
 package com.rjasao.nowsei.presentation.page_detail
 
-import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.net.Uri
-import androidx.compose.ui.text.input.TextFieldValue
+import android.util.Log
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.google.gson.Gson
-import com.google.gson.JsonSyntaxException
+import com.rjasao.nowsei.domain.model.ContentBlock
 import com.rjasao.nowsei.domain.model.Page
 import com.rjasao.nowsei.domain.usecase.GetPageByIdUseCase
 import com.rjasao.nowsei.domain.usecase.UpsertPageUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.firstOrNull
-import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
-import java.io.File
+import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.Locale
 import java.util.UUID
 import javax.inject.Inject
-
-data class PageDetailUiState(
-    val isLoading: Boolean = true,
-    val title: String = "",
-    val pageId: String? = null,
-    val lastModified: Date? = null,
-    val blocks: List<PageBlockUi> = emptyList(),
-    val focusedBlockId: String? = null
-)
-
-/** Estrutura persistida em Page.content (JSON). */
-private data class PageDocDto(
-    val v: Int = 1,
-    val blocks: List<PageBlockDto> = emptyList()
-)
-
-private data class PageBlockDto(
-    val id: String,
-    val type: String, // "text" | "image"
-    val text: String? = null,
-    val path: String? = null,
-    val caption: String? = null,
-    val size: String? = null
-)
 
 @HiltViewModel
 class PageDetailViewModel @Inject constructor(
     private val getPageByIdUseCase: GetPageByIdUseCase,
     private val upsertPageUseCase: UpsertPageUseCase,
-    @ApplicationContext private val appContext: Context,
-    private val gson: Gson,
+    private val pageDraftStore: PageDraftStore,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
+    companion object {
+        private const val TAG = "Nowsei.PageSave"
+    }
 
-    private val _uiState = MutableStateFlow(PageDetailUiState())
+    private var currentPage: Page? = null
+    private var observeJob: Job? = null
+    private var autoSaveJob: Job? = null
+    private var draftRecovered = false
+    private var lastNonEmptyHtml: String = ""
+    private var contentVersion: Long = 0L
+    private var lastLocalEditAt: Long = 0L
+
+    private val _uiState = MutableStateFlow(PageDetailUiState(isLoading = true))
     val uiState = _uiState.asStateFlow()
 
-    private var autosaveJob: Job? = null
-
     init {
-        val pageId: String? = savedStateHandle["pageId"]
-
-        if (!pageId.isNullOrBlank()) {
-            _uiState.update { it.copy(pageId = pageId) }
-            loadPageDetails(pageId)
+        val pageId: String = savedStateHandle["pageId"] ?: ""
+        if (pageId.isNotBlank()) {
+            loadPage(pageId)
         } else {
-            _uiState.update {
-                it.copy(isLoading = false, title = "Página não encontrada", blocks = listOf(newEmptyTextBlock()))
+            _uiState.value = PageDetailUiState(isLoading = false)
+        }
+    }
+
+    fun loadPage(pageId: String) {
+        observeJob?.cancel()
+        observeJob = viewModelScope.launch {
+            getPageByIdUseCase(pageId).collectLatest { page ->
+                if (page == null) {
+                    Log.w(TAG, "loadPage pageId=$pageId -> null")
+                    _uiState.value = PageDetailUiState(isLoading = false)
+                    return@collectLatest
+                }
+                if (lastLocalEditAt > 0L && page.updatedAt < lastLocalEditAt) {
+                    Log.d(
+                        TAG,
+                        "loadPage ignored stale snapshot id=${page.id} pageUpdatedAt=${page.updatedAt} localUpdatedAt=$lastLocalEditAt"
+                    )
+                    return@collectLatest
+                }
+
+                val persistedHtml = page.extractHtmlForEditor()
+                val draft = pageDraftStore.load(page.id)
+                val shouldRecoverDraft = !draftRecovered &&
+                        draft != null &&
+                        draft.updatedAt > page.updatedAt &&
+                        (draft.html.isNotBlank() || draft.title.isNotBlank())
+
+                val effectiveTitle = if (shouldRecoverDraft) {
+                    draft!!.title.ifBlank { page.title }
+                } else {
+                    page.title
+                }
+                val effectiveHtml = if (shouldRecoverDraft) {
+                    draft!!.html.ifBlank { persistedHtml }
+                } else {
+                    persistedHtml
+                }
+
+                currentPage = page.copy(
+                    title = effectiveTitle,
+                    updatedAt = maxOf(page.updatedAt, draft?.updatedAt ?: 0L)
+                )
+                val currentState = _uiState.value
+                if (!currentState.isLoading &&
+                    currentState.title == effectiveTitle &&
+                    currentState.htmlContent == effectiveHtml
+                ) {
+                    return@collectLatest
+                }
+                if (effectiveHtml.isNotBlank()) {
+                    lastNonEmptyHtml = effectiveHtml
+                }
+                draftRecovered = true
+
+                Log.d(
+                    TAG,
+                    "loadPage ok id=${page.id} title='${effectiveTitle}' htmlLen=${effectiveHtml.length} blocks=${page.contentBlocks.size} updatedAt=${page.updatedAt} recovered=$shouldRecoverDraft"
+                )
+
+                _uiState.value = PageDetailUiState(
+                    title = effectiveTitle,
+                    visitDate = formatVisitDate(page.createdAt),
+                    visitDateMillis = page.createdAt,
+                    htmlContent = effectiveHtml,
+                    isLoading = false,
+                    lastModified = formatDate(maxOf(page.updatedAt, draft?.updatedAt ?: page.updatedAt))
+                )
             }
         }
     }
 
-    private fun loadPageDetails(pageId: String) {
-        _uiState.update { it.copy(isLoading = true) }
+    fun onVisitDateChange(newDateMillis: Long) {
+        val page = currentPage ?: return
+        val normalizedDate = normalizeDateOnly(newDateMillis)
+        val now = System.currentTimeMillis()
+        contentVersion++
+        lastLocalEditAt = now
 
-        getPageByIdUseCase(pageId)
-            .onEach { page ->
-                if (page == null) {
-                    _uiState.update {
-                        it.copy(isLoading = false, title = "Página não encontrada", blocks = listOf(newEmptyTextBlock()))
-                    }
-                    return@onEach
-                }
-
-                val blocks = decodeBlocks(page.content)
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        title = page.title,
-                        pageId = page.id,
-                        lastModified = page.lastModifiedAt,
-                        blocks = blocks,
-                        focusedBlockId = blocks.firstOrNull()?.id
-                    )
-                }
-            }
-            .launchIn(viewModelScope)
+        currentPage = page.copy(
+            createdAt = normalizedDate,
+            updatedAt = now
+        )
+        _uiState.value = _uiState.value.copy(
+            visitDate = formatVisitDate(normalizedDate),
+            visitDateMillis = normalizedDate,
+            lastModified = formatDate(now)
+        )
+        scheduleSave(expectedVersion = contentVersion)
     }
 
     fun onTitleChange(newTitle: String) {
-        _uiState.update { it.copy(title = newTitle) }
-        scheduleAutosave()
-    }
+        val page = currentPage ?: return
+        val now = System.currentTimeMillis()
+        contentVersion++
+        lastLocalEditAt = now
+        Log.d(TAG, "onTitleChange id=${page.id} len=${newTitle.length}")
 
-    fun onTextBlockChange(blockId: String, value: TextFieldValue) {
-        _uiState.update { st ->
-            st.copy(
-                blocks = st.blocks.map {
-                    if (it is PageBlockUi.TextBlock && it.id == blockId) it.copy(value = value) else it
-                },
-                focusedBlockId = blockId
-            )
-        }
-        scheduleAutosave()
-    }
-
-    fun addTextBlockAfterFocus() {
-        _uiState.update { st ->
-            val insertAfterId = st.focusedBlockId ?: st.blocks.lastOrNull()?.id
-            val newBlock = newEmptyTextBlock()
-            val newList = insertAfter(st.blocks, insertAfterId, newBlock)
-            st.copy(blocks = newList, focusedBlockId = newBlock.id)
-        }
-        scheduleAutosave()
-    }
-
-    fun addImageFromUri(uri: Uri) {
-        addImagesFromUris(listOf(uri))
-    }
-
-    /**
-     * ✅ Inserção em lote (Scanner pode retornar várias páginas).
-     * Regra: inserir **logo abaixo do bloco atual** (focus) e mover o foco a cada inserção.
-     */
-    fun addImagesFromUris(uris: List<Uri>) {
-        viewModelScope.launch {
-            for (uri in uris) {
-                val storedPath = copyUriToInternalStorageAsPng(uri) ?: continue
-
-                _uiState.update { st ->
-                    val insertAfterId = st.focusedBlockId ?: st.blocks.lastOrNull()?.id
-                    val newBlock = PageBlockUi.ImageBlock(
-                        id = UUID.randomUUID().toString(),
-                        storedPath = storedPath,
-                        caption = "",
-                        sizeMode = ImageSizeMode.FIT_WIDTH
-                    )
-                    st.copy(
-                        blocks = insertAfter(st.blocks, insertAfterId, newBlock),
-                        focusedBlockId = newBlock.id
-                    )
-                }
-            }
-            if (uris.isNotEmpty()) scheduleAutosave()
-        }
-    }
-
-    fun onImageCaptionChange(blockId: String, caption: String) {
-        _uiState.update { st ->
-            st.copy(
-                blocks = st.blocks.map {
-                    if (it is PageBlockUi.ImageBlock && it.id == blockId) it.copy(caption = caption) else it
-                },
-                focusedBlockId = blockId
-            )
-        }
-        scheduleAutosave()
-    }
-
-    fun cycleImageSize(blockId: String) {
-        _uiState.update { st ->
-            st.copy(
-                blocks = st.blocks.map {
-                    if (it is PageBlockUi.ImageBlock && it.id == blockId) {
-                        val next = when (it.sizeMode) {
-                            ImageSizeMode.FIT_WIDTH -> ImageSizeMode.MEDIUM
-                            ImageSizeMode.MEDIUM -> ImageSizeMode.SMALL
-                            ImageSizeMode.SMALL -> ImageSizeMode.FIT_WIDTH
-                        }
-                        it.copy(sizeMode = next)
-                    } else it
-                },
-                focusedBlockId = blockId
-            )
-        }
-        scheduleAutosave()
-    }
-
-    fun moveBlock(blockId: String, up: Boolean) {
-        _uiState.update { st ->
-            val idx = st.blocks.indexOfFirst { it.id == blockId }
-            if (idx == -1) return@update st
-
-            val newIdx = if (up) idx - 1 else idx + 1
-            if (newIdx !in st.blocks.indices) return@update st
-
-            val list = st.blocks.toMutableList()
-            val item = list.removeAt(idx)
-            list.add(newIdx, item)
-            st.copy(blocks = list, focusedBlockId = blockId)
-        }
-        scheduleAutosave()
-    }
-
-    fun removeBlock(blockId: String) {
-        _uiState.update { st ->
-            val list = st.blocks.toMutableList()
-            val idx = list.indexOfFirst { it.id == blockId }
-            if (idx == -1) return@update st
-
-            val removed = list.removeAt(idx)
-            if (removed is PageBlockUi.ImageBlock) {
-                runCatching { File(removed.storedPath).delete() }
-            }
-
-            val safeList = if (list.isEmpty()) listOf(newEmptyTextBlock()) else list
-            st.copy(blocks = safeList, focusedBlockId = safeList.getOrNull(idx)?.id ?: safeList.last().id)
-        }
-        scheduleAutosave()
-    }
-
-    /** Auto-save tipo OneNote (debounce). */
-    private fun scheduleAutosave() {
-        autosaveJob?.cancel()
-        autosaveJob = viewModelScope.launch {
-            delay(650)
-            savePageInternal(updateUiTimestamp = true)
-        }
-    }
-
-    /** Flush ao sair da tela. */
-    fun flushSaveNow() {
-        autosaveJob?.cancel()
-        autosaveJob = null
-        viewModelScope.launch {
-            savePageInternal(updateUiTimestamp = true)
-        }
-    }
-
-    fun savePage() {
-        flushSaveNow()
-    }
-
-    private suspend fun savePageInternal(updateUiTimestamp: Boolean) {
-        val st = _uiState.value
-        val pageId = st.pageId ?: return
-
-        val original = getPageByIdUseCase(pageId).firstOrNull() ?: return
-        val now = Date()
-
-        val updated: Page = original.copy(
-            title = st.title,
-            content = encodeBlocks(st.blocks),
-            lastModifiedAt = now
+        currentPage = page.copy(
+            title = newTitle,
+            updatedAt = now
         )
 
-        upsertPageUseCase(updated)
-        if (updateUiTimestamp) _uiState.update { it.copy(lastModified = now) }
+        _uiState.value = _uiState.value.copy(
+            title = newTitle,
+            lastModified = formatDate(now)
+        )
+        saveDraftNow(
+            title = newTitle,
+            html = _uiState.value.htmlContent,
+            updatedAt = now
+        )
+
+        if (shouldSaveImmediately(page, html = _uiState.value.htmlContent, title = newTitle)) {
+            val version = contentVersion
+            viewModelScope.launch { saveNow(version) }
+        } else {
+            scheduleSave(expectedVersion = contentVersion)
+        }
     }
 
-    // -------------------------------
-    // Persistência (JSON) em Page.content
-    // -------------------------------
+    fun onHtmlContentChange(newHtml: String) {
+        val page = currentPage ?: return
+        val current = _uiState.value
 
-    private fun decodeBlocks(content: String): List<PageBlockUi> {
-        // Compat: se for texto puro (versão antiga), vira 1 bloco de texto
-        if (content.isBlank()) return listOf(newEmptyTextBlock())
+        if (current.htmlContent == newHtml) return
+        Log.d(TAG, "onHtmlContentChange id=${page.id} htmlLen=${newHtml.length}")
 
-        val dto = try {
-            gson.fromJson(content, PageDocDto::class.java)
-        } catch (_: JsonSyntaxException) {
-            null
-        } catch (_: Exception) {
-            null
+        val now = System.currentTimeMillis()
+        contentVersion++
+        lastLocalEditAt = now
+
+        _uiState.value = current.copy(
+            htmlContent = newHtml,
+            lastModified = formatDate(now)
+        )
+        if (newHtml.isNotBlank()) {
+            lastNonEmptyHtml = newHtml
         }
 
-        if (dto == null || dto.blocks.isEmpty()) {
-            return listOf(PageBlockUi.TextBlock(id = UUID.randomUUID().toString(), value = TextFieldValue(content)))
+        currentPage = page.copy(updatedAt = now)
+        saveDraftNow(
+            title = _uiState.value.title,
+            html = newHtml,
+            updatedAt = now
+        )
+
+        if (shouldSaveImmediately(page, html = newHtml, title = current.title)) {
+            val version = contentVersion
+            viewModelScope.launch { saveNow(version) }
+        } else {
+            scheduleSave(expectedVersion = contentVersion)
         }
+    }
 
-        val out = mutableListOf<PageBlockUi>()
-        for (b in dto.blocks) {
-            when (b.type) {
-                "text" -> {
-                    out += PageBlockUi.TextBlock(
-                        id = b.id,
-                        value = TextFieldValue(b.text.orEmpty())
-                    )
+    fun flushSaveNow(latestHtml: String? = null, onSaved: (() -> Unit)? = null) {
+        autoSaveJob?.cancel()
+        viewModelScope.launch {
+            Log.d(
+                TAG,
+                "flushSaveNow id=${currentPage?.id} latestHtmlLen=${latestHtml?.length ?: -1}"
+            )
+            if (latestHtml != null) {
+                val now = System.currentTimeMillis()
+                contentVersion++
+                lastLocalEditAt = now
+                val htmlToUse = latestHtml.ifBlank {
+                    _uiState.value.htmlContent.ifBlank { lastNonEmptyHtml }
                 }
-
-                "image" -> {
-                    val path = b.path ?: continue
-                    val sizeMode = when (b.size) {
-                        "SMALL" -> ImageSizeMode.SMALL
-                        "MEDIUM" -> ImageSizeMode.MEDIUM
-                        else -> ImageSizeMode.FIT_WIDTH
-                    }
-                    out += PageBlockUi.ImageBlock(
-                        id = b.id,
-                        storedPath = path,
-                        caption = b.caption.orEmpty(),
-                        sizeMode = sizeMode
-                    )
+                _uiState.value = _uiState.value.copy(
+                    htmlContent = htmlToUse,
+                    lastModified = formatDate(now)
+                )
+                if (htmlToUse.isNotBlank()) {
+                    lastNonEmptyHtml = htmlToUse
                 }
+                currentPage = currentPage?.copy(updatedAt = now)
+                saveDraftNow(
+                    title = _uiState.value.title,
+                    html = htmlToUse,
+                    updatedAt = now
+                )
             }
+            saveNow(contentVersion)
+            onSaved?.invoke()
         }
-
-        return if (out.isEmpty()) listOf(newEmptyTextBlock()) else out
     }
 
-    private fun encodeBlocks(blocks: List<PageBlockUi>): String {
-        val dtos = blocks.map { block ->
+    private fun scheduleSave(delayMs: Long = 700L, expectedVersion: Long) {
+        autoSaveJob?.cancel()
+        autoSaveJob = viewModelScope.launch {
+            delay(delayMs)
+            saveNow(expectedVersion)
+        }
+    }
+
+    private suspend fun saveNow(expectedVersion: Long? = null) {
+        if (expectedVersion != null && expectedVersion != contentVersion) {
+            Log.d(TAG, "saveNow skip stale expectedVersion=$expectedVersion currentVersion=$contentVersion")
+            return
+        }
+        val page = currentPage ?: return
+        val normalizedTitle = _uiState.value.title.trim().ifBlank { page.title.trim() }
+        if (normalizedTitle.isBlank()) {
+            Log.w(TAG, "saveNow skipped blank title id=${page.id}")
+            return
+        }
+        val persistedHtml = page.contentBlocks
+            .filterIsInstance<ContentBlock.TextBlock>()
+            .sortedBy { it.order }
+            .firstOrNull()
+            ?.text
+            .orEmpty()
+        val html = _uiState.value.htmlContent
+            .ifBlank { lastNonEmptyHtml }
+            .ifBlank { persistedHtml }
+        val existingTextId = page.contentBlocks
+            .filterIsInstance<ContentBlock.TextBlock>()
+            .sortedBy { it.order }
+            .firstOrNull()
+            ?.id
+            ?: UUID.randomUUID().toString()
+
+        // Persistencia robusta: guarda todo o documento (texto + imagens) como HTML unico.
+        val newBlocks = listOf(
+            ContentBlock.TextBlock(
+                id = existingTextId,
+                order = 0,
+                text = html
+            )
+        )
+
+        val pageToSave = page.copy(
+            title = normalizedTitle,
+            contentBlocks = newBlocks,
+            updatedAt = System.currentTimeMillis()
+        )
+        lastLocalEditAt = pageToSave.updatedAt
+
+        currentPage = pageToSave
+        Log.d(
+            TAG,
+            "saveNow upsert id=${pageToSave.id} titleLen=${pageToSave.title.length} htmlLen=${html.length} blocks=${pageToSave.contentBlocks.size}"
+        )
+        upsertPageUseCase(pageToSave)
+        pageDraftStore.clear(pageToSave.id)
+        Log.d(TAG, "saveNow success id=${pageToSave.id}")
+    }
+
+    private fun saveDraftNow(title: String, html: String, updatedAt: Long) {
+        val pageId = currentPage?.id ?: return
+        viewModelScope.launch {
+            pageDraftStore.save(
+                PageDraftSnapshot(
+                    pageId = pageId,
+                    title = title,
+                    html = html,
+                    updatedAt = updatedAt
+                )
+            )
+        }
+    }
+
+    private fun formatDate(time: Long): String {
+        val sdf = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale("pt", "BR"))
+        return sdf.format(Date(time))
+    }
+
+    private fun formatVisitDate(time: Long): String {
+        val sdf = SimpleDateFormat("dd/MM/yyyy", Locale("pt", "BR"))
+        return sdf.format(Date(time))
+    }
+
+    private fun normalizeDateOnly(time: Long): Long {
+        val calendar = java.util.Calendar.getInstance().apply {
+            timeInMillis = time
+            set(java.util.Calendar.HOUR_OF_DAY, 0)
+            set(java.util.Calendar.MINUTE, 0)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        return calendar.timeInMillis
+    }
+
+    private fun shouldSaveImmediately(page: Page, html: String, title: String): Boolean {
+        val onlyBlankTextBlocks = page.contentBlocks.all { block ->
             when (block) {
-                is PageBlockUi.TextBlock -> PageBlockDto(
-                    id = block.id,
-                    type = "text",
-                    text = block.value.text
-                )
-
-                is PageBlockUi.ImageBlock -> PageBlockDto(
-                    id = block.id,
-                    type = "image",
-                    path = block.storedPath,
-                    caption = block.caption,
-                    size = block.sizeMode.name
-                )
+                is ContentBlock.TextBlock -> block.text.isBlank()
+                is ContentBlock.ImageBlock -> false
             }
         }
-        return gson.toJson(PageDocDto(v = 1, blocks = dtos))
-    }
-
-    // -------------------------------
-    // Files
-    // -------------------------------
-
-    private fun copyUriToInternalStorageAsPng(uri: Uri): String? {
-        return try {
-            val resolver = appContext.contentResolver
-            val bytes = resolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
-
-            val dir = File(appContext.filesDir, "page_images").apply { mkdirs() }
-            val outFile = File(dir, "img_${System.currentTimeMillis()}_${UUID.randomUUID()}.png")
-
-            // 1) Tenta decodificar e salvar como PNG (requisito do app)
-            val bmp = decodeBitmapSafely(bytes, maxSidePx = 2200)
-            if (bmp != null) {
-                outFile.outputStream().use { out ->
-                    bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
-                }
-                bmp.recycle()
-            } else {
-                // fallback: salva bruto (pode ser JPEG). Evita perder a imagem.
-                outFile.outputStream().use { out -> out.write(bytes) }
-            }
-
-            outFile.absolutePath
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    private fun decodeBitmapSafely(bytes: ByteArray, maxSidePx: Int): Bitmap? {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-        val w = bounds.outWidth
-        val h = bounds.outHeight
-        if (w <= 0 || h <= 0) return null
-
-        var inSampleSize = 1
-        while (maxOf(w, h) / inSampleSize > maxSidePx) inSampleSize *= 2
-
-        val opts = BitmapFactory.Options().apply {
-            this.inSampleSize = inSampleSize
-            inPreferredConfig = Bitmap.Config.ARGB_8888
-        }
-        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
-    }
-
-    // -------------------------------
-    // Helpers
-    // -------------------------------
-
-    private fun newEmptyTextBlock(): PageBlockUi.TextBlock =
-        PageBlockUi.TextBlock(id = UUID.randomUUID().toString(), value = TextFieldValue(""))
-
-    private fun <T : PageBlockUi> insertAfter(list: List<PageBlockUi>, afterId: String?, newItem: T): List<PageBlockUi> {
-        if (list.isEmpty() || afterId == null) return list + newItem
-        val idx = list.indexOfFirst { it.id == afterId }
-        if (idx == -1) return list + newItem
-        val out = list.toMutableList()
-        out.add(idx + 1, newItem)
-        return out
+        return onlyBlankTextBlocks && (html.isNotBlank() || title.isNotBlank())
     }
 }
+
+private fun Page.extractHtmlForEditor(): String {
+    val sorted = contentBlocks.sortedBy { it.order }
+    if (sorted.isEmpty()) return ""
+
+    if (sorted.size == 1 && sorted.first() is ContentBlock.TextBlock) {
+        val text = (sorted.first() as ContentBlock.TextBlock).text
+        if (looksLikeHtml(text)) return text
+        return textToHtml(text)
+    }
+
+    val sb = StringBuilder()
+
+    sorted.forEach { block ->
+        when (block) {
+            is ContentBlock.TextBlock -> {
+                if (block.text.isBlank()) {
+                    sb.append("<p><br></p>")
+                } else if (looksLikeHtml(block.text)) {
+                    sb.append(block.text)
+                } else {
+                    sb.append(textToHtml(block.text))
+                }
+            }
+
+            is ContentBlock.ImageBlock -> {
+                val src = escapeHtmlAttr(block.imageUrl)
+                val caption = block.caption // evita smart cast issue
+
+                sb.append("<figure class=\"image-card\"><img src=\"")
+                    .append(src)
+                    .append("\" /><figcaption class=\"image-caption\" contenteditable=\"true\"><span class=\"image-caption-label\">")
+                    .append("img ")
+                    .append("%02d".format(block.order + 1))
+                    .append("</span><span class=\"image-caption-text\"> - ")
+                    .append(
+                        escapeHtml(
+                            caption?.takeIf { it.isNotBlank() } ?: "toque para descrever"
+                        )
+                    )
+                    .append("</span></figcaption></figure>")
+            }
+        }
+    }
+
+    return sb.toString()
+}
+
+private fun looksLikeHtml(text: String): Boolean {
+    val t = text.trim()
+    return t.contains("<p", ignoreCase = true) ||
+            t.contains("<img", ignoreCase = true) ||
+            t.contains("<div", ignoreCase = true) ||
+            t.contains("</")
+}
+
+private fun textToHtml(text: String): String {
+    if (text.isBlank()) return ""
+    return text
+        .split("\n")
+        .joinToString(separator = "") { line ->
+            if (line.isBlank()) "<p><br></p>" else "<p>${escapeHtml(line)}</p>"
+        }
+}
+
+private fun escapeHtml(text: String): String {
+    return buildString(text.length) {
+        text.forEach { ch ->
+            when (ch) {
+                '&' -> append("&amp;")
+                '<' -> append("&lt;")
+                '>' -> append("&gt;")
+                '"' -> append("&quot;")
+                '\'' -> append("&#39;")
+                else -> append(ch)
+            }
+        }
+    }
+}
+
+private fun escapeHtmlAttr(text: String): String = escapeHtml(text)
+
+
+private fun buildStructuredBlocksFromHtml(
+    html: String,
+    existingBlocks: List<ContentBlock>
+): List<ContentBlock> {
+    val normalizedHtml = html.trim()
+    val existingTextIds = existingBlocks
+        .filterIsInstance<ContentBlock.TextBlock>()
+        .sortedBy { it.order }
+        .map { it.id }
+        .toMutableList()
+    val existingImageBlocks = existingBlocks
+        .filterIsInstance<ContentBlock.ImageBlock>()
+        .sortedBy { it.order }
+        .toMutableList()
+
+    if (normalizedHtml.isBlank()) {
+        return listOf(
+            ContentBlock.TextBlock(
+                id = existingTextIds.removeFirstOrNull() ?: UUID.randomUUID().toString(),
+                order = 0,
+                text = ""
+            )
+        )
+    }
+
+    val imageBlockRegex = pageHtmlImageRegex()
+
+    val blocks = mutableListOf<ContentBlock>()
+    var order = 0
+    var cursor = 0
+
+    imageBlockRegex.findAll(normalizedHtml).forEach { match ->
+        val textSegment = normalizedHtml.substring(cursor, match.range.first)
+        if (appendTextBlockIfNeeded(blocks, textSegment, order, existingTextIds)) {
+            order++
+        }
+
+        parseImageBlock(match.value, order, existingImageBlocks)?.let {
+            blocks += it
+            order++
+        }
+
+        cursor = match.range.last + 1
+    }
+
+    val trailingText = normalizedHtml.substring(cursor)
+    appendTextBlockIfNeeded(blocks, trailingText, order, existingTextIds)
+
+    if (blocks.isEmpty()) {
+        blocks += ContentBlock.TextBlock(
+            id = existingTextIds.removeFirstOrNull() ?: UUID.randomUUID().toString(),
+            order = 0,
+            text = normalizedHtml
+        )
+    }
+
+    return blocks
+}
+
+private fun appendTextBlockIfNeeded(
+    blocks: MutableList<ContentBlock>,
+    htmlSegment: String,
+    order: Int,
+    existingTextIds: MutableList<String>
+): Boolean {
+    val normalizedSegment = normalizeHtmlTextSegment(htmlSegment)
+    if (normalizedSegment.isBlank()) return false
+
+    blocks += ContentBlock.TextBlock(
+        id = existingTextIds.removeFirstOrNull() ?: UUID.randomUUID().toString(),
+        order = order,
+        text = normalizedSegment
+    )
+    return true
+}
+
+private fun parseImageBlock(
+    htmlSegment: String,
+    order: Int,
+    existingImageBlocks: MutableList<ContentBlock.ImageBlock>
+): ContentBlock.ImageBlock? {
+    val src = Regex("""<img\b[^>]*src\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+        .find(htmlSegment)
+        ?.groupValues
+        ?.getOrNull(1)
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+        ?: return null
+
+    val captionHtml = Regex(
+        """<figcaption\b[^>]*>(.*?)</figcaption>""",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    )
+        .find(htmlSegment)
+        ?.groupValues
+        ?.getOrNull(1)
+        ?.trim()
+        ?: Regex("""<p>(.*?)</p>\s*$""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+            .find(htmlSegment)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.trim()
+            .orEmpty()
+
+    val captionText = stripImageCaptionPrefix(extractPlainTextFromHtml(captionHtml))
+        .ifBlank { "toque para descrever" }
+
+    val existing = existingImageBlocks.removeFirstOrNull()
+    return ContentBlock.ImageBlock(
+        id = existing?.id ?: UUID.randomUUID().toString(),
+        order = order,
+        imageUrl = src,
+        thumbnailUrl = existing?.thumbnailUrl,
+        caption = captionText,
+        width = existing?.width,
+        height = existing?.height
+    )
+}
+
+private fun normalizeHtmlTextSegment(segment: String): String {
+    return segment
+        .trim()
+        .replace(Regex("""^(?:<p>\s*(?:<br\s*/?>|&nbsp;|\s)*</p>\s*)+""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "")
+        .replace(Regex("""(?:<p>\s*(?:<br\s*/?>|&nbsp;|\s)*</p>\s*)+$""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "")
+        .trim()
+}
+

@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package com.rjasao.nowsei.data.di
 
 import android.content.Context

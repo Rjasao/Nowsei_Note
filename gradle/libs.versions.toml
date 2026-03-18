@@ -11,6 +11,7 @@ composeBom = "2024.05.00"
 # --- Dependências ---
 coreKtx = "1.13.1"
 lifecycleRuntimeKtx = "2.8.3"
+lifecycleRuntimeCompose = "2.8.3"
 activityCompose = "1.8.2"
 activity = "1.8.2"
 hilt = "2.51.1"
@@ -21,6 +22,8 @@ appcompat = "1.7.0"
 material = "1.12.0"
 constraintlayout = "2.2.1"
 coil = "2.6.0"
+reorderable = "0.9.6"
+documentScanner = "16.0.0"
 
 # CORREÇÃO: Adicionadas versões para WorkManager e sua integração com Hilt
 work = "2.9.0"
@@ -43,6 +46,7 @@ espressoCore = "3.6.1"
 # --- Core e Lifecycle ---
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycleRuntimeKtx" }
+androidx-lifecycle-runtime-compose = { group = "androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "lifecycleRuntimeCompose" }
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
 androidx-activity = { group = "androidx.activity", name = "activity", version.ref = "activity" }
 
@@ -64,6 +68,7 @@ hilt-compiler = { group = "com.google.dagger", name = "hilt-compiler", version.r
 androidx-hilt-navigation-compose = { group = "androidx.hilt", name = "hilt-navigation-compose", version.ref = "hilt-navigation-compose" }
 # CORREÇÃO: Adicionada a dependência para integração do Hilt com WorkManager
 androidx-hilt-work = { group = "androidx.hilt", name = "hilt-work", version.ref = "hiltWork" }
+androidx-hilt-compiler = { group = "androidx.hilt", name = "hilt-compiler", version.ref = "hiltWork" }
 
 # --- Tarefas em Segundo Plano (WorkManager) ---
 # CORREÇÃO: Adicionada a dependência do WorkManager
@@ -79,6 +84,8 @@ kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-c
 
 # --- Carregamento de Imagem ---
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
+reorderable = { group = "org.burnoutcrew.composereorderable", name = "reorderable", version.ref = "reorderable" }
+document-scanner = { group = "com.google.android.gms", name = "play-services-mlkit-document-scanner", version.ref = "documentScanner" }
 
 # --- Bibliotecas para Autenticação e Google Drive (VERSÕES FORÇADAS E CORRIGIDAS) ---
 google-signin-auth = { group = "com.google.android.gms", name = "play-services-auth", version.ref = "google-signin" }
@@ -106,4 +113,3 @@ android-library = { id = "com.android.library", version.ref = "agp" }
 jetbrains-kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
-

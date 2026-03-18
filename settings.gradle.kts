@@ -3,7 +3,7 @@ pluginManagement {
         google()
         mavenCentral()
         gradlePluginPortal()
-        // ADICIONE ESTA LINHA - ESSA É A CORREÇÃO PRINCIPAL
+        // Repositorio do compose compiler
         maven("https://androidx.dev/storage/compose-compiler/repository/")
     }
 }
@@ -12,7 +12,7 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        // ADICIONE ESTA LINHA TAMBÉM - ESSA É A CORREÇÃO PRINCIPAL
+        // Repositorio do compose compiler
         maven("https://androidx.dev/storage/compose-compiler/repository/")
     }
 }
@@ -21,4 +21,3 @@ rootProject.name = "Nowsei"
 include(":app")
 include(":domain")
 include(":data")
-

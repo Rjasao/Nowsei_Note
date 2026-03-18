@@ -3,9 +3,10 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
-
-    <!-- Scanner (ML Kit) usa a câmera -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
 
     <application
         android:name=".NowseiApplication"
@@ -19,6 +20,17 @@
         android:theme="@style/Theme.Nowsei"
         tools:targetApi="31">
 
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup"
+                tools:node="remove" />
+        </provider>
+
         <!-- FileProvider: permite compartilhar PDF/arquivos do cache com outros apps (WhatsApp/Email etc.) -->
         <provider
             android:name="androidx.core.content.FileProvider"
@@ -27,14 +39,14 @@
             android:grantUriPermissions="true">
             <meta-data
                 android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/nowsei_file_paths" />
+                android:resource="@xml/file_paths" />
         </provider>
-
 
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
+            android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.Nowsei">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
